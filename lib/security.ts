@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import type { NextApiRequest, NextApiResponse } from 'next'
 
 const SECRET = process.env.SESSION_SECRET || 'fallback-dev-secret-change-in-prod'
 
@@ -12,14 +13,19 @@ export function generateCsrfToken(sessionId: string): string {
 }
 
 export function verifyCsrfToken(sessionId: string, token: string): boolean {
+  if (!token || token.length !== 64) return false
   const window = Math.floor(Date.now() / 3_600_000)
   for (const w of [window, window - 1]) {
     const expected = crypto
       .createHmac('sha256', SECRET)
       .update(`${sessionId}:${w}`)
       .digest('hex')
-    if (crypto.timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'))) {
-      return true
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'))) {
+        return true
+      }
+    } catch {
+      // invalid hex — ignore
     }
   }
   return false
@@ -32,7 +38,7 @@ export function sanitize(s: unknown, maxLen = 128): string {
 }
 
 // Validate date string is YYYY-MM-DD and is a valid Sat–Thu
-const VALID_DAYS = new Set(['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday'])
+const VALID_DAYS = new Set(['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])
 export function validateBookingDate(dateStr: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return 'Invalid date format.'
   const d = new Date(dateStr + 'T12:00:00Z')
@@ -51,8 +57,7 @@ export function timingSafeCompare(a: string, b: string): boolean {
     const ba = Buffer.from(a)
     const bb = Buffer.from(b)
     if (ba.length !== bb.length) {
-      // Still do a comparison to avoid timing leak on length
-      crypto.timingSafeEqual(ba, ba)
+      crypto.timingSafeEqual(ba, ba) // dummy op to keep timing consistent
       return false
     }
     return crypto.timingSafeEqual(ba, bb)
@@ -61,7 +66,7 @@ export function timingSafeCompare(a: string, b: string): boolean {
   }
 }
 
-export function getClientIp(req: { headers: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }): string {
+export function getClientIp(req: NextApiRequest): string {
   const forwarded = req.headers['x-forwarded-for']
   if (forwarded) {
     const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0]
@@ -70,7 +75,7 @@ export function getClientIp(req: { headers: Record<string, string | string[] | u
   return req.socket?.remoteAddress || '127.0.0.1'
 }
 
-export function addSecurityHeaders(res: { setHeader: (k: string, v: string) => void }) {
+export function addSecurityHeaders(res: NextApiResponse): void {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('X-Frame-Options', 'DENY')
   res.setHeader('X-XSS-Protection', '1; mode=block')

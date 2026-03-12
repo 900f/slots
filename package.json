@@ -9,19 +9,17 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.0.2",
-    "bcryptjs": "^2.4.3",
-    "iron-session": "^8.0.1",
-    "next": "^16.1.6",
-    "react": "^18",
-    "react-dom": "^18",
-    "uuid": "^9.0.0"
+    "next": "^15.2.4",
+    "react": "^19",
+    "react-dom": "^19",
+    "@neondatabase/serverless": "^0.10.4",
+    "iron-session": "^8.0.4",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "@types/uuid": "^9",
     "typescript": "^5"
   }

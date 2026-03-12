@@ -7,7 +7,7 @@ export type SessionData = {
 }
 
 export const sessionOptions: SessionOptions = {
-  password: process.env.SESSION_SECRET!,
+  password: process.env.SESSION_SECRET || 'fallback-dev-secret-change-in-prod-min-32-chars!!',
   cookieName: 'booking_session',
   cookieOptions: {
     secure: process.env.NODE_ENV === 'production',
@@ -25,5 +25,5 @@ export async function getSession(
 }
 
 export function requireAdmin(session: SessionData): boolean {
-  return session.isAdmin === true && !!session.username
+  return session.isAdmin === true && typeof session.username === 'string' && session.username.length > 0
 }

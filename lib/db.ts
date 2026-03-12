@@ -1,7 +1,13 @@
 import { neon } from '@neondatabase/serverless'
-const sql = neon(process.env.POSTGRES_URL!)
+
+function getDb() {
+  const url = process.env.POSTGRES_URL
+  if (!url) throw new Error('POSTGRES_URL environment variable is not set')
+  return neon(url)
+}
 
 export async function initDb() {
+  const sql = getDb()
   await sql`
     CREATE TABLE IF NOT EXISTS bookings (
       id          TEXT PRIMARY KEY,
@@ -35,27 +41,21 @@ export type DaySummary = {
 }
 
 export async function getSlotsForDate(date: string): Promise<Slot[]> {
-  const { rows } = await sql`
+  const sql = getDb()
+  const rows = await sql`
     SELECT slot_num, login_type, login_val
     FROM bookings
     WHERE date = ${date}
     ORDER BY slot_num
   `
-  const taken = new Map(rows.map(r => [r.slot_num, r]))
+  const taken = new Map(rows.map((r) => [r.slot_num as number, r]))
   return Array.from({ length: 4 }, (_, i) => {
     const n = i + 1
     const b = taken.get(n)
     return b
-      ? { slot_num: n, booked: true, login_val: b.login_val, login_type: b.login_type }
+      ? { slot_num: n, booked: true, login_val: b.login_val as string, login_type: b.login_type as string }
       : { slot_num: n, booked: false }
   })
-}
-
-export async function getSlotsCountForDate(date: string): Promise<number> {
-  const { rows } = await sql`
-    SELECT COUNT(*) as cnt FROM bookings WHERE date = ${date}
-  `
-  return parseInt(rows[0].cnt, 10)
 }
 
 // Atomic booking: returns slot_num on success, null if full or race condition
@@ -65,9 +65,9 @@ export async function atomicBook(
   loginVal: string,
   id: string
 ): Promise<number | null> {
-  // Use a serializable transaction to prevent double-booking
+  const sql = getDb()
   try {
-    const { rows } = await sql`
+    const rows = await sql`
       WITH available AS (
         SELECT s.n AS slot_num
         FROM generate_series(1, 4) s(n)
@@ -84,21 +84,23 @@ export async function atomicBook(
       RETURNING slot_num
     `
     if (rows.length === 0) return null
-    return rows[0].slot_num
+    return rows[0].slot_num as number
   } catch {
     return null
   }
 }
 
 export async function cancelBooking(date: string, slotNum: number): Promise<boolean> {
-  const { rowCount } = await sql`
+  const sql = getDb()
+  const rows = await sql`
     DELETE FROM bookings WHERE date = ${date} AND slot_num = ${slotNum}
+    RETURNING id
   `
-  return (rowCount ?? 0) > 0
+  return rows.length > 0
 }
 
 export async function getWeekSummary(saturdayStr: string): Promise<DaySummary[]> {
-  const DAY_NAMES = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday']
+  const DAY_NAMES = ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday']
   const START_HOURS: Record<string, number> = {
     Saturday: 15, Sunday: 16, Monday: 17,
     Tuesday: 18, Wednesday: 19, Thursday: 20,
@@ -117,7 +119,7 @@ export async function getWeekSummary(saturdayStr: string): Promise<DaySummary[]>
       date: dateStr,
       day_name: dayName,
       start_time: formatTime(h),
-      booked: slots.filter(s => s.booked).length,
+      booked: slots.filter((s) => s.booked).length,
       total: 4,
       slots,
     })
@@ -133,7 +135,7 @@ export function formatTime(h: number): string {
 
 export function getCurrentSaturday(): string {
   const now = new Date()
-  const dow = now.getUTCDay() // 0=Sun..6=Sat
+  const dow = now.getUTCDay()
   const diff = dow === 6 ? 0 : -(dow + 1)
   const sat = new Date(now)
   sat.setUTCDate(now.getUTCDate() + diff)
