@@ -49,7 +49,7 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
   const [csrf, setCsrf] = useState('')
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>()
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const satStr = getSaturday(weekOffset)
   const thuStr = (() => {

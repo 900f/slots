@@ -30,7 +30,7 @@ export default function AdminDashboard() {
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
   const [cancellingSlot, setCancellingSlot] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>()
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const satStr = getSaturday(weekOffset)
   const [authChecked, setAuthChecked] = useState(false)
 
