@@ -1,9 +1,14 @@
-import { neon } from '@neondatabase/serverless'
+import { neon, NeonQueryFunction } from '@neondatabase/serverless'
 
-function getDb() {
-  const url = process.env.POSTGRES_URL
-  if (!url) throw new Error('POSTGRES_URL environment variable is not set')
-  return neon(url)
+// Cache the connection per serverless instance
+let _sql: NeonQueryFunction<false, false> | null = null
+
+function getDb(): NeonQueryFunction<false, false> {
+  if (_sql) return _sql
+  const url = process.env.POSTGRES_URL || process.env.DATABASE_URL
+  if (!url) throw new Error('No database URL found. Set POSTGRES_URL in environment variables.')
+  _sql = neon(url)
+  return _sql
 }
 
 export async function initDb() {
@@ -19,9 +24,7 @@ export async function initDb() {
       UNIQUE (date, slot_num)
     )
   `
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings(date)
-  `
+  await sql`CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings(date)`
 }
 
 export type Slot = {
@@ -48,17 +51,17 @@ export async function getSlotsForDate(date: string): Promise<Slot[]> {
     WHERE date = ${date}
     ORDER BY slot_num
   `
-  const taken = new Map(rows.map((r) => [r.slot_num as number, r]))
+  const taken = new Map(rows.map((r) => [Number(r.slot_num), r]))
   return Array.from({ length: 4 }, (_, i) => {
     const n = i + 1
     const b = taken.get(n)
     return b
-      ? { slot_num: n, booked: true, login_val: b.login_val as string, login_type: b.login_type as string }
+      ? { slot_num: n, booked: true, login_val: String(b.login_val), login_type: String(b.login_type) }
       : { slot_num: n, booked: false }
   })
 }
 
-// Atomic booking: returns slot_num on success, null if full or race condition
+// Returns slot_num on success, null if day is full, throws on DB error
 export async function atomicBook(
   date: string,
   loginType: string,
@@ -66,35 +69,66 @@ export async function atomicBook(
   id: string
 ): Promise<number | null> {
   const sql = getDb()
-  try {
-    const rows = await sql`
-      WITH available AS (
-        SELECT s.n AS slot_num
-        FROM generate_series(1, 4) s(n)
-        WHERE NOT EXISTS (
-          SELECT 1 FROM bookings
-          WHERE date = ${date} AND slot_num = s.n
-        )
-        ORDER BY s.n
-        LIMIT 1
+
+  // Step 1: count current bookings
+  const countRows = await sql`
+    SELECT COUNT(*)::int AS cnt FROM bookings WHERE date = ${date}
+  `
+  const current = Number(countRows[0]?.cnt ?? 0)
+  if (current >= 4) return null
+
+  // Step 2: find next free slot
+  const freeRows = await sql`
+    SELECT s.n AS slot_num
+    FROM generate_series(1, 4) s(n)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM bookings WHERE date = ${date} AND slot_num = s.n
+    )
+    ORDER BY s.n
+    LIMIT 1
+  `
+  if (freeRows.length === 0) return null
+  const slotNum = Number(freeRows[0].slot_num)
+
+  // Step 3: insert (UNIQUE constraint on date+slot_num prevents race condition)
+  await sql`
+    INSERT INTO bookings (id, date, slot_num, login_type, login_val)
+    VALUES (${id}, ${date}, ${slotNum}, ${loginType}, ${loginVal})
+    ON CONFLICT (date, slot_num) DO NOTHING
+  `
+
+  // Step 4: verify our insert won the race
+  const verify = await sql`
+    SELECT id FROM bookings WHERE date = ${date} AND slot_num = ${slotNum} AND id = ${id}
+  `
+  if (verify.length === 0) {
+    // Someone else took that slot in a race — try again with next free slot
+    const retryRows = await sql`
+      SELECT s.n AS slot_num
+      FROM generate_series(1, 4) s(n)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM bookings WHERE date = ${date} AND slot_num = s.n
       )
-      INSERT INTO bookings (id, date, slot_num, login_type, login_val)
-      SELECT ${id}, ${date}, slot_num, ${loginType}, ${loginVal}
-      FROM available
-      RETURNING slot_num
+      ORDER BY s.n
+      LIMIT 1
     `
-    if (rows.length === 0) return null
-    return rows[0].slot_num as number
-  } catch {
-    return null
+    if (retryRows.length === 0) return null
+    const retrySlot = Number(retryRows[0].slot_num)
+    const newId = id + '_r'
+    await sql`
+      INSERT INTO bookings (id, date, slot_num, login_type, login_val)
+      VALUES (${newId}, ${date}, ${retrySlot}, ${loginType}, ${loginVal})
+    `
+    return retrySlot
   }
+
+  return slotNum
 }
 
 export async function cancelBooking(date: string, slotNum: number): Promise<boolean> {
   const sql = getDb()
   const rows = await sql`
-    DELETE FROM bookings WHERE date = ${date} AND slot_num = ${slotNum}
-    RETURNING id
+    DELETE FROM bookings WHERE date = ${date} AND slot_num = ${slotNum} RETURNING id
   `
   return rows.length > 0
 }
@@ -131,13 +165,4 @@ export function formatTime(h: number): string {
   const suffix = h >= 12 ? 'PM' : 'AM'
   const hr = h > 12 ? h - 12 : h
   return `${hr}:00 ${suffix}`
-}
-
-export function getCurrentSaturday(): string {
-  const now = new Date()
-  const dow = now.getUTCDay()
-  const diff = dow === 6 ? 0 : -(dow + 1)
-  const sat = new Date(now)
-  sat.setUTCDate(now.getUTCDate() + diff)
-  return sat.toISOString().slice(0, 10)
 }

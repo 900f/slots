@@ -21,7 +21,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const data = await getWeekSummary(saturday)
     return res.status(200).json(data)
   } catch (e) {
-    console.error('[slots]', e)
-    return res.status(500).json({ error: 'Failed to load slots' })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[slots] Error:', msg)
+    return res.status(500).json({ error: msg })
   }
 }
