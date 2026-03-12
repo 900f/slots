@@ -39,16 +39,16 @@ function fmtTime(h: number): string {
 
 // ── Component ──────────────────────────────────────────────────────────────
 export default function BookingPage() {
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [weekData, setWeekData] = useState<Record<string, DaySummary>>({})
-  const [loading, setLoading] = useState(false)
-  const [selDate, setSelDate] = useState<string | null>(null)
-  const [loginMode, setLoginMode] = useState<'username' | 'email'>('username')
-  const [loginVal, setLoginVal] = useState('')
-  const [password, setPassword] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
-  const [csrf, setCsrf] = useState('')
+  const [weekOffset, setWeekOffset]   = useState(0)
+  const [weekData, setWeekData]       = useState<Record<string, DaySummary>>({})
+  const [loading, setLoading]         = useState(false)
+  const [selDate, setSelDate]         = useState<string | null>(null)
+  const [loginMode, setLoginMode]     = useState<'username' | 'email'>('username')
+  const [loginVal, setLoginVal]       = useState('')
+  const [password, setPassword]       = useState('')
+  const [submitting, setSubmitting]   = useState(false)
+  const [toast, setToast]             = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
+  const [csrf, setCsrf]               = useState('')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const satStr = getSaturday(weekOffset)
@@ -58,11 +58,12 @@ export default function BookingPage() {
     return d.toISOString().slice(0, 10)
   })()
 
-  // Generate CSRF client-side seed (session-less: uses IP on server)
+  // Fetch real CSRF token from server on mount
   useEffect(() => {
-    // CSRF seed generated on-page by fetching a lightweight ping
-    // We rely on server-side IP-keyed CSRF for stateless pages
-    setCsrf(btoa(`${Date.now()}:${Math.random()}`).slice(0, 24))
+    fetch('/api/csrf')
+      .then(r => r.json())
+      .then(d => { if (d.token) setCsrf(d.token) })
+      .catch(() => {})
   }, [])
 
   const loadWeek = useCallback(async () => {
@@ -74,11 +75,7 @@ export default function BookingPage() {
       const map: Record<string, DaySummary> = {}
       rows.forEach(r => { map[r.date] = r })
       setWeekData(map)
-      // If selected date is no longer in this week, clear it
-      setSelDate(d => {
-        if (d && !map[d]) return null
-        return d
-      })
+      setSelDate(d => (d && !map[d] ? null : d))
     } catch { showToast('Failed to load slots', 'err') }
     finally { setLoading(false) }
   }, [satStr])
@@ -104,11 +101,16 @@ export default function BookingPage() {
 
     setSubmitting(true)
     try {
+      // Refresh CSRF token just before submitting
+      const csrfRes = await fetch('/api/csrf')
+      const csrfData = await csrfRes.json()
+      const freshCsrf = csrfData.token || csrf
+
       const res = await fetch('/api/book', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          csrf,
+          csrf: freshCsrf,
           date: selDate,
           login_type: loginMode,
           login_val: val,
@@ -188,8 +190,7 @@ export default function BookingPage() {
                     border: `1px solid ${isSel ? 'var(--accent)' : full ? 'rgba(247,85,85,.15)' : 'var(--border)'}`,
                     boxShadow: isSel ? '0 0 0 1px var(--accent)' : 'none',
                     borderRadius: 9, padding: '.45rem .15rem', cursor: full ? 'not-allowed' : 'pointer',
-                    textAlign: 'center', transition: 'all .18s',
-                    opacity: full ? .32 : 1,
+                    textAlign: 'center', transition: 'all .18s', opacity: full ? .32 : 1,
                     WebkitTapHighlightColor: 'transparent',
                   }}
                 >

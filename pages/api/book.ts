@@ -1,11 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { v4 as uuidv4 } from 'uuid'
 import { atomicBook, formatTime } from '@/lib/db'
-import { getSession } from '@/lib/session'
 import {
   sanitize, validateBookingDate, validateEmail,
-  verifyCsrfToken, getClientIp, addSecurityHeaders,
+  getClientIp, addSecurityHeaders,
 } from '@/lib/security'
+import { verifyToken } from './csrf'
 import { rateLimit } from '@/lib/rateLimit'
 import { notifyDiscord } from '@/lib/discord'
 
@@ -23,10 +23,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { ok } = rateLimit(`book:${ip}`, 10, 60_000)
   if (!ok) return res.status(429).json({ error: 'Too many attempts. Wait a minute.' })
 
-  // Get session for CSRF check
-  const session = await getSession(req, res)
-  const sessionId = session.username ?? ip // use IP as fallback seed for CSRF
-
   const body = req.body
   if (!body || typeof body !== 'object') {
     return res.status(400).json({ error: 'Invalid request' })
@@ -36,10 +32,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const dateStr   = sanitize(String(body.date ?? ''), 20)
   const loginType = sanitize(String(body.login_type ?? ''), 20)
   const loginVal  = sanitize(String(body.login_val ?? ''), 128)
-  const _password = String(body.password ?? '').slice(0, 128) // stored server-side only, sent to Discord
+  const password  = String(body.password ?? '').slice(0, 128)
 
-  // CSRF
-  if (!verifyCsrfToken(sessionId, csrf)) {
+  // Verify CSRF token using IP as seed (matches what /api/csrf generated)
+  if (!verifyToken(ip, csrf)) {
     return res.status(403).json({ error: 'Invalid security token. Please refresh the page.' })
   }
 
@@ -47,7 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const dateError = validateBookingDate(dateStr)
   if (dateError) return res.status(400).json({ error: dateError })
 
-  // Validate login type and value
+  // Validate login
   if (!['username', 'email'].includes(loginType)) {
     return res.status(400).json({ error: 'Invalid login type.' })
   }
@@ -57,7 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (loginType === 'email' && !validateEmail(loginVal)) {
     return res.status(400).json({ error: 'Invalid email address.' })
   }
-  if (!_password || _password.length < 1) {
+  if (!password) {
     return res.status(400).json({ error: 'Password is required.' })
   }
 
@@ -69,12 +65,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(409).json({ error: 'This day is fully booked. No slots remain.' })
   }
 
-  // Get day info for Discord
+  // Discord notification
   const d = new Date(dateStr + 'T12:00:00Z')
   const dayName = d.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })
   const startTime = formatTime(START_HOURS[dayName] ?? 15)
-
-  // Fire-and-forget Discord notification
   notifyDiscord({ loginType, loginVal, date: dateStr, dayName, startTime, slotNum }).catch(() => {})
 
   return res.status(200).json({ ok: true, slot_num: slotNum })
