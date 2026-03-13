@@ -2,7 +2,7 @@ import Head from 'next/head'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 
-type Slot = { slot_num: number; booked: boolean; login_val?: string; login_type?: string }
+type Slot = { slot_num: number; booked: boolean; login_val?: string; login_type?: string; password?: string }
 type DaySummary = { date: string; day_name: string; start_time: string; booked: number; total: number; slots: Slot[] }
 
 function getSaturday(offset = 0): string {
@@ -23,21 +23,30 @@ function fmtFull(dateStr: string): string {
 
 export default function AdminDashboard() {
   const router = useRouter()
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [weekData, setWeekData] = useState<DaySummary[]>([])
-  const [username, setUsername] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [expandedDay, setExpandedDay] = useState<string | null>(null)
+  const [weekOffset, setWeekOffset]       = useState(0)
+  const [weekData, setWeekData]           = useState<DaySummary[]>([])
+  const [username, setUsername]           = useState('')
+  const [loading, setLoading]             = useState(true)
+  const [expandedDay, setExpandedDay]     = useState<string | null>(null)
   const [cancellingSlot, setCancellingSlot] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
+  const [toast, setToast]                 = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const satStr = getSaturday(weekOffset)
-  const [authChecked, setAuthChecked] = useState(false)
+  const [authChecked, setAuthChecked]     = useState(false)
 
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type })
     clearTimeout(toastTimer.current)
     toastTimer.current = setTimeout(() => setToast(null), 3000)
+  }
+
+  function togglePassword(key: string) {
+    setVisiblePasswords(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
   }
 
   const loadWeek = useCallback(async (sat: string) => {
@@ -52,8 +61,7 @@ export default function AdminDashboard() {
       setAuthChecked(true)
     } catch (e: unknown) {
       if ((e as Error)?.message !== 'Unauthorized') showToast('Failed to load data', 'err')
-    }
-    finally { setLoading(false) }
+    } finally { setLoading(false) }
   }, [router])
 
   useEffect(() => { loadWeek(satStr) }, [satStr, loadWeek])
@@ -135,9 +143,9 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* ── Stats row ── */}
+        {/* ── Stats ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '.65rem', marginBottom: '1.25rem' }}
-          className="fade-up" >
+          className="fade-up">
           {[
             { label: 'Booked', val: totalBooked, color: 'var(--accent)' },
             { label: 'Open',   val: totalOpen,   color: 'var(--success)' },
@@ -187,7 +195,7 @@ export default function AdminDashboard() {
                   background: 'var(--card)', border: `1px solid ${isExpanded ? 'var(--border-hi)' : 'var(--border)'}`,
                   borderRadius: 12, overflow: 'hidden', transition: 'border-color .2s',
                 }}>
-                  {/* Day header — tappable */}
+                  {/* Day header */}
                   <button
                     onClick={() => setExpandedDay(isExpanded ? null : day.date)}
                     style={{
@@ -203,9 +211,7 @@ export default function AdminDashboard() {
                       </span>
                       <span style={{ fontSize: '.62rem', color: 'var(--muted)' }}>{fmtFull(day.date)}</span>
                     </div>
-
                     <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem' }}>
-                      {/* Slot dot indicators */}
                       <div style={{ display: 'flex', gap: 3 }}>
                         {day.slots.map(s => (
                           <div key={s.slot_num} style={{
@@ -224,7 +230,7 @@ export default function AdminDashboard() {
                           {day.booked}/{day.total}
                         </span>
                       </div>
-                      <span style={{ color: 'var(--muted)', fontSize: '.7rem', transition: 'transform .2s', display: 'block', transform: isExpanded ? 'rotate(180deg)' : 'none' }}>
+                      <span style={{ color: 'var(--muted)', fontSize: '.7rem', display: 'block', transition: 'transform .2s', transform: isExpanded ? 'rotate(180deg)' : 'none' }}>
                         ▾
                       </span>
                     </div>
@@ -237,43 +243,88 @@ export default function AdminDashboard() {
 
                   {/* Expanded slots */}
                   {isExpanded && (
-                    <div style={{ padding: '.6rem' }}>
+                    <div style={{ padding: '.6rem', display: 'flex', flexDirection: 'column', gap: '.4rem' }}>
                       {day.slots.map(slot => {
                         const cancelKey = `${day.date}:${slot.slot_num}`
+                        const pwKey = `${day.date}:${slot.slot_num}:pw`
+                        const pwVisible = visiblePasswords.has(pwKey)
+
                         return (
                           <div key={slot.slot_num} style={{
-                            display: 'flex', alignItems: 'center', gap: '.7rem',
-                            padding: '.55rem .6rem', borderRadius: 8, marginBottom: '.35rem',
+                            borderRadius: 9,
                             background: slot.booked ? 'rgba(79,110,247,.06)' : 'rgba(45,217,138,.04)',
                             border: `1px solid ${slot.booked ? 'rgba(79,110,247,.14)' : 'rgba(45,217,138,.1)'}`,
+                            overflow: 'hidden',
                           }}>
-                            <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '.72rem', color: 'var(--muted)', width: 22, flexShrink: 0 }}>
-                              #{slot.slot_num}
-                            </span>
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: '.7rem',
+                              padding: '.55rem .6rem',
+                            }}>
+                              {/* Slot number */}
+                              <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '.72rem', color: 'var(--muted)', width: 22, flexShrink: 0 }}>
+                                #{slot.slot_num}
+                              </span>
 
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              {slot.booked ? (
-                                <>
-                                  <span style={{ display: 'block', fontSize: '.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {/* Info */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {slot.booked ? (
+                                  <span style={{ display: 'block', fontSize: '.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>
                                     {slot.login_val}
+                                    <span style={{ fontSize: '.6rem', color: 'var(--muted)', fontWeight: 400, marginLeft: 6 }}>
+                                      {slot.login_type}
+                                    </span>
                                   </span>
-                                  <span style={{ fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.05em' }}>
-                                    {slot.login_type}
-                                  </span>
-                                </>
-                              ) : (
-                                <span style={{ fontSize: '.74rem', color: 'var(--success)' }}>Available</span>
+                                ) : (
+                                  <span style={{ fontSize: '.74rem', color: 'var(--success)' }}>Available</span>
+                                )}
+                              </div>
+
+                              {/* Actions */}
+                              {slot.booked && (
+                                <div style={{ display: 'flex', gap: '.35rem', flexShrink: 0 }}>
+                                  <button
+                                    onClick={() => togglePassword(pwKey)}
+                                    style={{
+                                      background: 'rgba(79,110,247,.1)', border: '1px solid rgba(79,110,247,.2)',
+                                      color: 'var(--accent)', borderRadius: 7, padding: '.38rem .6rem',
+                                      fontSize: '.65rem', cursor: 'pointer', fontFamily: 'DM Mono, monospace',
+                                      WebkitTapHighlightColor: 'transparent',
+                                    }}
+                                  >
+                                    {pwVisible ? 'Hide' : 'Password'}
+                                  </button>
+                                  <button
+                                    className="btn btn-danger btn-sm"
+                                    disabled={cancellingSlot === cancelKey}
+                                    onClick={() => cancelSlot(day.date, slot.slot_num)}
+                                  >
+                                    {cancellingSlot === cancelKey ? <span className="spinner" /> : 'Cancel'}
+                                  </button>
+                                </div>
                               )}
                             </div>
 
-                            {slot.booked && (
-                              <button
-                                className="btn btn-danger btn-sm"
-                                disabled={cancellingSlot === cancelKey}
-                                onClick={() => cancelSlot(day.date, slot.slot_num)}
-                              >
-                                {cancellingSlot === cancelKey ? <span className="spinner" /> : 'Cancel'}
-                              </button>
+                            {/* Password reveal row */}
+                            {slot.booked && pwVisible && (
+                              <div style={{
+                                padding: '.45rem .6rem .55rem 2.4rem',
+                                borderTop: '1px solid rgba(79,110,247,.1)',
+                                background: 'rgba(79,110,247,.04)',
+                                display: 'flex', alignItems: 'center', gap: '.5rem',
+                              }}>
+                                <span style={{ fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.1em', textTransform: 'uppercase', flexShrink: 0 }}>
+                                  Password
+                                </span>
+                                <span style={{
+                                  fontFamily: 'DM Mono, monospace', fontSize: '.82rem',
+                                  color: 'var(--text)', letterSpacing: '.05em',
+                                  background: 'var(--bg)', padding: '.25rem .6rem',
+                                  borderRadius: 6, border: '1px solid var(--border)',
+                                  flex: 1, wordBreak: 'break-all',
+                                }}>
+                                  {slot.password || '—'}
+                                </span>
+                              </div>
                             )}
                           </div>
                         )
@@ -287,7 +338,6 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Toast */}
       <div className={`toast ${toast ? 'show' : ''} ${toast?.type ?? ''}`}>
         <span className="toast-dot" />
         <span>{toast?.msg}</span>

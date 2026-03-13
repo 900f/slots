@@ -1,6 +1,5 @@
 import { neon, NeonQueryFunction } from '@neondatabase/serverless'
 
-// Cache the connection per serverless instance
 let _sql: NeonQueryFunction<false, false> | null = null
 
 function getDb(): NeonQueryFunction<false, false> {
@@ -20,11 +19,16 @@ export async function initDb() {
       slot_num    INTEGER NOT NULL CHECK (slot_num BETWEEN 1 AND 4),
       login_type  TEXT NOT NULL CHECK (login_type IN ('username','email')),
       login_val   TEXT NOT NULL,
+      password    TEXT NOT NULL DEFAULT '',
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (date, slot_num)
     )
   `
   await sql`CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings(date)`
+  // Add password column if table already existed without it
+  await sql`
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS password TEXT NOT NULL DEFAULT ''
+  `
 }
 
 export type Slot = {
@@ -32,6 +36,7 @@ export type Slot = {
   booked: boolean
   login_val?: string
   login_type?: string
+  password?: string
 }
 
 export type DaySummary = {
@@ -46,7 +51,7 @@ export type DaySummary = {
 export async function getSlotsForDate(date: string): Promise<Slot[]> {
   const sql = getDb()
   const rows = await sql`
-    SELECT slot_num, login_type, login_val
+    SELECT slot_num, login_type, login_val, password
     FROM bookings
     WHERE date = ${date}
     ORDER BY slot_num
@@ -56,28 +61,32 @@ export async function getSlotsForDate(date: string): Promise<Slot[]> {
     const n = i + 1
     const b = taken.get(n)
     return b
-      ? { slot_num: n, booked: true, login_val: String(b.login_val), login_type: String(b.login_type) }
+      ? {
+          slot_num: n,
+          booked: true,
+          login_val: String(b.login_val),
+          login_type: String(b.login_type),
+          password: String(b.password),
+        }
       : { slot_num: n, booked: false }
   })
 }
 
-// Returns slot_num on success, null if day is full, throws on DB error
 export async function atomicBook(
   date: string,
   loginType: string,
   loginVal: string,
+  password: string,
   id: string
 ): Promise<number | null> {
   const sql = getDb()
 
-  // Step 1: count current bookings
   const countRows = await sql`
     SELECT COUNT(*)::int AS cnt FROM bookings WHERE date = ${date}
   `
   const current = Number(countRows[0]?.cnt ?? 0)
   if (current >= 4) return null
 
-  // Step 2: find next free slot
   const freeRows = await sql`
     SELECT s.n AS slot_num
     FROM generate_series(1, 4) s(n)
@@ -90,19 +99,16 @@ export async function atomicBook(
   if (freeRows.length === 0) return null
   const slotNum = Number(freeRows[0].slot_num)
 
-  // Step 3: insert (UNIQUE constraint on date+slot_num prevents race condition)
   await sql`
-    INSERT INTO bookings (id, date, slot_num, login_type, login_val)
-    VALUES (${id}, ${date}, ${slotNum}, ${loginType}, ${loginVal})
+    INSERT INTO bookings (id, date, slot_num, login_type, login_val, password)
+    VALUES (${id}, ${date}, ${slotNum}, ${loginType}, ${loginVal}, ${password})
     ON CONFLICT (date, slot_num) DO NOTHING
   `
 
-  // Step 4: verify our insert won the race
   const verify = await sql`
     SELECT id FROM bookings WHERE date = ${date} AND slot_num = ${slotNum} AND id = ${id}
   `
   if (verify.length === 0) {
-    // Someone else took that slot in a race — try again with next free slot
     const retryRows = await sql`
       SELECT s.n AS slot_num
       FROM generate_series(1, 4) s(n)
@@ -116,8 +122,8 @@ export async function atomicBook(
     const retrySlot = Number(retryRows[0].slot_num)
     const newId = id + '_r'
     await sql`
-      INSERT INTO bookings (id, date, slot_num, login_type, login_val)
-      VALUES (${newId}, ${date}, ${retrySlot}, ${loginType}, ${loginVal})
+      INSERT INTO bookings (id, date, slot_num, login_type, login_val, password)
+      VALUES (${newId}, ${date}, ${retrySlot}, ${loginType}, ${loginVal}, ${password})
     `
     return retrySlot
   }
